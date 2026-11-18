@@ -6,6 +6,7 @@ const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) throw new Error('SESSION_SECRET is required in production');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: false } : false
@@ -115,6 +116,7 @@ app.patch('/api/requests/:id', requireOwner, async (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 initDb().then(() => {
