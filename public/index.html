@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>Request an Estimate | Daddy Earl's Auto Repair</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header"><a class="brand" href="/">DADDY EARL'S <span>AUTO REPAIR</span></a><a class="header-link" href="/dashboard">Owner Login</a></header>
+<main class="hero-wrap">
+  <section class="hero-copy"><p class="eyebrow">REPAIR & SERVICE ESTIMATES</p><h1>Let's get your vehicle taken care of.</h1><p>Tell us a little about your vehicle and what it needs. Our team will review your request and follow up with you.</p><div class="trust-row"><span>Automotive</span><span>Commercial & Heavy Duty</span><span>Marine & Off-Road</span></div></section>
+  <section class="panel form-panel">
+    <div class="panel-heading"><div><p class="eyebrow">START HERE</p><h2>Request an Estimate</h2></div><span class="step">01 / 01</span></div>
+    <form id="request-form">
+      <h3>Your contact information</h3>
+      <div class="form-grid"><label>Full name *<input name="customerName" required autocomplete="name"></label><label>Phone number *<input name="phone" required type="tel" autocomplete="tel"></label><label class="full">Email address<input name="email" type="email" autocomplete="email"></label></div>
+      <h3>Vehicle information</h3>
+      <div class="form-grid"><label>Vehicle type *<select name="vehicleType"><option>Automotive</option><option>Light Duty Truck</option><option>Medium Duty</option><option>Heavy Duty</option><option>Commercial Vehicle</option><option>Marine</option><option>Off-Road</option></select></label><label>Year *<input name="year" required placeholder="e.g. 2020"></label><label>Make *<input name="make" required placeholder="e.g. Ford"></label><label>Model *<input name="model" required placeholder="e.g. F-250"></label><label>Engine<input name="engine" placeholder="Engine size or type"></label><label>Mileage<input name="mileage" placeholder="Current mileage"></label><label class="full">VIN<input name="vin" maxlength="17" placeholder="17-character VIN, if available"></label></div>
+      <h3>How can we help?</h3><label>Describe the issue or service needed *<textarea name="concern" required rows="4" placeholder="Tell us what the vehicle is doing, warning lights, noises, or the service you need..."></textarea></label>
+      <button class="button primary full-button" type="submit">Send Estimate Request <span>→</span></button><p class="fine-print">Submitting this form sends a request for review. It is not a repair authorization or a final estimate.</p>
+    </form>
+    <div id="form-message" class="message" role="status" hidden></div>
+  </section>
+</main>
+<footer class="site-footer"><span>Daddy Earl's Auto Repair</span><span>Honest service. Quality repairs.</span></footer>
+<script src="/request.js"></script>
+</body></html>
