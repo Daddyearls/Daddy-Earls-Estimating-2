@@ -175,21 +175,11 @@ async function sendEstimate(row) {
   const pdf = await estimatePdf(row, estimate);
   const subject = "Your repair estimate from Daddy Earl's Auto Repair";
   const html = \`<div style="font-family:Arial,sans-serif;color:#202124;max-width:620px;margin:auto;line-height:1.55"><div style="background:#171717;color:#fff;padding:24px"><div style="font-size:21px;font-weight:bold;letter-spacing:1px">DADDY EARL'S AUTO REPAIR</div><div style="color:#e6b84b;margin-top:5px">YOUR REPAIR ESTIMATE</div></div><div style="padding:24px"><p>Hello \${esc(row.customer_name)},</p><p>Thank you for choosing Daddy Earl's Auto Repair. Your estimate is ready. A PDF copy is attached for your records.</p><div style="background:#f4f4f4;padding:16px;border-radius:8px"><strong>Vehicle:</strong> \${esc([row.year,row.make,row.model].filter(Boolean).join(' '))}<br><strong>Service:</strong> \${esc(row.concern)}<br><strong>Estimated total:</strong> <span style="font-size:22px;font-weight:bold">\${money(totals.total)}</span></div>\${estimate.customerMessage ? '<p>' + esc(estimate.customerMessage) + '</p>' : ''}<p>Please review the attached estimate and choose an option below. Your response will be recorded and sent to our team.</p><p style="margin:28px 0"><a href="\${responseUrl}" style="background:#171717;color:#fff;padding:13px 20px;text-decoration:none;border-radius:5px">Review estimate & respond</a></p><p style="font-size:13px;color:#666">This link is valid for 30 days. Selecting approve records your response; our team will confirm scheduling before work begins.</p><p>Thank you,<br>Daddy Earl's Auto Repair</p></div></div>\`;
-  await transport.sendMail({
-    from: process.env.SMTP_FROM,
-    to: row.email,
-    subject,
-    html,
-    attachments: [{ filename: 'Daddy-Earls-Estimate-' + row.id + '.pdf', content: pdf, contentType: 'application/pdf' }]
-  });
+  await sendMicrosoftMail({ to: row.email, subject, html, attachments: [{ filename: 'Daddy-Earls-Estimate-' + row.id + '.pdf', content: pdf, contentType: 'application/pdf' }] });
   await pool.query('UPDATE estimate_requests SET estimate_email_sent_at=NOW(), estimate_email_error=NULL, status=CASE WHEN status=\'Approved\' THEN \'Sent\' ELSE status END WHERE id=$1', [row.id]);
   const notifyTo = process.env.OWNER_NOTIFICATION_EMAIL;
   if (notifyTo) {
-    await transport.sendMail({
-      from: process.env.SMTP_FROM, to: notifyTo,
-      subject: 'Estimate emailed to ' + row.customer_name + ' (#' + row.id + ')',
-      text: 'Estimate #' + row.id + ' was emailed to ' + row.customer_name + ' (' + row.email + '). Estimated total: ' + money(totals.total) + '.'
-    }).catch(error => console.error('Owner notification email failed:', error.message));
+    await sendMicrosoftMail({ to: notifyTo, subject: 'Estimate emailed to ' + row.customer_name + ' (#' + row.id + ')', text: 'Estimate #' + row.id + ' was emailed to ' + row.customer_name + ' (' + row.email + '). Estimated total: ' + money(totals.total) + '.' }).catch(error => console.error('Owner notification email failed:', error.message));
   }
   return { sent: true, alreadySent: false };
 }
@@ -320,11 +310,7 @@ app.post('/estimate-response/:token', async (req, res) => {
     const r = result.rows[0];
     if (process.env.OWNER_NOTIFICATION_EMAIL) {
       try {
-        await mailer().then(m => m.sendMail({
-          from: process.env.SMTP_FROM, to: process.env.OWNER_NOTIFICATION_EMAIL,
-          subject: 'Customer ' + decision.toLowerCase() + ' estimate #' + r.id,
-          text: r.customer_name + ' (' + (r.email || 'no email') + ') has ' + decision.toLowerCase() + ' estimate #' + r.id + '.'
-        }));
+        await sendMicrosoftMail({ to: process.env.OWNER_NOTIFICATION_EMAIL, subject: 'Customer ' + decision.toLowerCase() + ' estimate #' + r.id, text: r.customer_name + ' (' + (r.email || 'no email') + ') has ' + decision.toLowerCase() + ' estimate #' + r.id + '.' });
       } catch (e) { console.error('Customer response notification failed:', e.message); }
     }
     res.send('<!doctype html><html><body style="font-family:Arial;padding:40px;max-width:620px;margin:auto"><h1>Thank you</h1><p>Your response has been recorded: <strong>' + esc(decision) + '</strong>.</p><p>Daddy Earl\'s Auto Repair has been notified and will follow up with you.</p></body></html>');
