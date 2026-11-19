@@ -25,7 +25,7 @@ function renderStats(){
 function renderList(){
  if(!requests.length){$('#request-list').innerHTML='<div class="empty-list">No estimate requests yet. New customer submissions will appear here.</div>';return;}
  $('#request-list').innerHTML=requests.map(r=>'<button class="request-row '+(selected&&selected.id===r.id?'active':'')+'" data-id="'+r.id+'"><span class="request-top"><strong>#'+r.id+' · '+esc(r.customer_name)+'</strong><span class="status '+slug(r.status)+'">'+esc(r.status)+'</span></span><span class="request-vehicle">'+esc([r.year,r.make,r.model].filter(Boolean).join(' '))+'</span><span class="request-bottom">'+esc(r.vehicle_type)+' · '+new Date(r.created_at).toLocaleDateString()+'</span></button>').join('');
- document.querySelectorAll('.request-row').forEach(b=>b.addEventListener('click',()=>{selected=requests.find(r=>r.id===Number(b.dataset.id));renderList();renderDetail();}));
+ document.querySelectorAll('.request-row').forEach(b=>b.addEventListener('click',()=>{selected=requests.find(r=>String(r.id)===b.dataset.id);renderList();renderDetail();}));
 }
 function clearDetail(){selected=null;$('#empty-detail').hidden=false;$('#request-detail').hidden=true;}
 function renderDetail(){
