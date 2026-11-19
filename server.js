@@ -58,7 +58,7 @@ async function initDb() {
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_response_token_hash TEXT;
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_response_expires_at TIMESTAMPTZ;
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision TEXT;
-    ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision_at TIMESTAMPTZ;\n    CREATE TABLE IF NOT EXISTS microsoft_email_tokens (id INTEGER PRIMARY KEY CHECK (id=1), encrypted_cache TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision_at TIMESTAMPTZ;\n
   \`);
 }
 
