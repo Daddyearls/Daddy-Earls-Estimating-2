@@ -9,7 +9,7 @@ async function api(url, options={}) {
   return data;
 }
 function showApp(signedIn) { $('#login-panel').hidden=signedIn; $('#app-panel').hidden=!signedIn; }
-async function checkLogin() { try { const r=await api('/api/me'); showApp(r.signedIn); if(r.signedIn) await loadRequests(); } catch(e) { showApp(false); } }
+async function checkEmailConnection(){try{const r=await api('/api/email/status');$('#outlook-status').textContent=r.connected?'Outlook is connected. Approved estimates will be sent from the connected account.':'Outlook is not connected yet.';$('#outlook-connect').textContent=r.connected?'Reconnect Outlook':'Connect Outlook';}catch(e){$('#outlook-status').textContent='Outlook connection setup is not configured yet.';}}\nasync function checkLogin() { try { const r=await api('/api/me'); showApp(r.signedIn); if(r.signedIn){await loadRequests();await checkEmailConnection();} } catch(e) { showApp(false); } }
 $('#login-form').addEventListener('submit',async e=>{e.preventDefault();$('#login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify({password:new FormData(e.target).get('password')})});e.target.reset();showApp(true);await loadRequests();}catch(err){$('#login-error').textContent=err.message;}});
 $('#logout').addEventListener('click',async()=>{await api('/api/logout',{method:'POST'});showApp(false);});
 $('#refresh').addEventListener('click',loadRequests);
