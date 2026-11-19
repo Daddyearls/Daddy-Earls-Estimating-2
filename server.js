@@ -99,7 +99,7 @@ function estimatePdf(row, estimate) {
       doc.font('Helvetica').text(row.concern || '—', { width: 500 });
       doc.moveDown().font('Helvetica-Bold').text('Estimate details');
       items.forEach((item, index) => {
-        const lineTotal = Number(item.quantity || 0) * Number(item.unitCost || 0) * (item.kind === 'Part' && estimate.partsType !== 'Customer Supplied' ? 1 + PARTS_MARKUP : 1);
+        const lineTotal = item.kind === 'Labor' ? Number(item.quantity || 0) * LABOR_RATE : Number(item.quantity || 0) * Number(item.unitCost || 0) * (estimate.partsType !== 'Customer Supplied' ? 1 + PARTS_MARKUP : 1);
         const label = item.kind === 'Labor' ? 'Labor' : 'Parts';
         doc.font('Helvetica').text((index + 1) + '. ' + label + ' — ' + (item.description || 'Service item') + ' | Qty: ' + Number(item.quantity || 0) + ' | ' + money(lineTotal), { width: 500 });
       });
