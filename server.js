@@ -109,7 +109,7 @@ function msalClient() {
 }
 async function sendMicrosoftMail({ to, subject, html, text: plainText, attachments }) {
   const client = msalClient();
-  const accounts = await client.getTokenCache().then(cache => cache.getAllAccounts());
+  const accounts = await client.getTokenCache().getAllAccounts();
   if (!accounts.length) throw new Error('Connect the shop Outlook account in the dashboard before sending estimates.');
   const token = await client.acquireTokenSilent({ account: accounts[0], scopes: EMAIL_SCOPES });
   const message = { subject, body: { contentType: html ? 'HTML' : 'Text', content: html || plainText || '' }, toRecipients: [{ emailAddress: { address: to } }] };
