@@ -33,7 +33,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const baseUrl = () => (process.env.APP_BASE_URL || 'https://daddy-earls-estimating.onrender.com').replace(/\/+$/, '');
 
 async function initDb() {
-  await pool.query(\`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS estimate_requests (
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -59,7 +59,7 @@ async function initDb() {
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_response_expires_at TIMESTAMPTZ;
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision TEXT;
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision_at TIMESTAMPTZ;\n
-  \`);
+  `);
 }
 
 function requireOwner(req, res, next) {
@@ -143,7 +143,7 @@ async function sendEstimate(row) {
   const responseUrl = baseUrl() + '/estimate-response/' + token;
   const pdf = await estimatePdf(row, estimate);
   const subject = "Your repair estimate from Daddy Earl's Auto Repair";
-  const html = \`<div style="font-family:Arial,sans-serif;color:#202124;max-width:620px;margin:auto;line-height:1.55"><div style="background:#171717;color:#fff;padding:24px"><div style="font-size:21px;font-weight:bold;letter-spacing:1px">DADDY EARL'S AUTO REPAIR</div><div style="color:#e6b84b;margin-top:5px">YOUR REPAIR ESTIMATE</div></div><div style="padding:24px"><p>Hello \${esc(row.customer_name)},</p><p>Thank you for choosing Daddy Earl's Auto Repair. Your estimate is ready. A PDF copy is attached for your records.</p><div style="background:#f4f4f4;padding:16px;border-radius:8px"><strong>Vehicle:</strong> \${esc([row.year,row.make,row.model].filter(Boolean).join(' '))}<br><strong>Service:</strong> \${esc(row.concern)}<br><strong>Estimated total:</strong> <span style="font-size:22px;font-weight:bold">\${money(totals.total)}</span></div>\${estimate.customerMessage ? '<p>' + esc(estimate.customerMessage) + '</p>' : ''}<p>Please review the attached estimate and choose an option below. Your response will be recorded and sent to our team.</p><p style="margin:28px 0"><a href="\${responseUrl}" style="background:#171717;color:#fff;padding:13px 20px;text-decoration:none;border-radius:5px">Review estimate & respond</a></p><p style="font-size:13px;color:#666">This link is valid for 30 days. Selecting approve records your response; our team will confirm scheduling before work begins.</p><p>Thank you,<br>Daddy Earl's Auto Repair</p></div></div>\`;
+  const html = `<div style="font-family:Arial,sans-serif;color:#202124;max-width:620px;margin:auto;line-height:1.55"><div style="background:#171717;color:#fff;padding:24px"><div style="font-size:21px;font-weight:bold;letter-spacing:1px">DADDY EARL'S AUTO REPAIR</div><div style="color:#e6b84b;margin-top:5px">YOUR REPAIR ESTIMATE</div></div><div style="padding:24px"><p>Hello ${esc(row.customer_name)},</p><p>Thank you for choosing Daddy Earl's Auto Repair. Your estimate is ready. A PDF copy is attached for your records.</p><div style="background:#f4f4f4;padding:16px;border-radius:8px"><strong>Vehicle:</strong> ${esc([row.year,row.make,row.model].filter(Boolean).join(' '))}<br><strong>Service:</strong> ${esc(row.concern)}<br><strong>Estimated total:</strong> <span style="font-size:22px;font-weight:bold">${money(totals.total)}</span></div>${estimate.customerMessage ? '<p>' + esc(estimate.customerMessage) + '</p>' : ''}<p>Please review the attached estimate and choose an option below. Your response will be recorded and sent to our team.</p><p style="margin:28px 0"><a href="${responseUrl}" style="background:#171717;color:#fff;padding:13px 20px;text-decoration:none;border-radius:5px">Review estimate & respond</a></p><p style="font-size:13px;color:#666">This link is valid for 30 days. Selecting approve records your response; our team will confirm scheduling before work begins.</p><p>Thank you,<br>Daddy Earl's Auto Repair</p></div></div>`;
   await sendEmail({ to: row.email, subject, html, attachments: [{ filename: 'Daddy-Earls-Estimate-' + row.id + '.pdf', content: pdf, contentType: 'application/pdf' }] });
   await pool.query('UPDATE estimate_requests SET estimate_email_sent_at=NOW(), estimate_email_error=NULL, status=CASE WHEN status=\'Approved\' THEN \'Sent\' ELSE status END WHERE id=$1', [row.id]);
   const notifyTo = process.env.OWNER_NOTIFICATION_EMAIL || process.env.SMTP_USER;
@@ -182,8 +182,8 @@ app.post('/api/requests', async (req, res) => {
   if (required.some(k => !String(b[k] || '').trim())) return res.status(400).json({ error: 'Please complete all required fields.' });
   try {
     const result = await pool.query(
-      \`INSERT INTO estimate_requests (customer_name, phone, email, year, make, model, engine, vin, mileage, vehicle_type, concern)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id\`,
+      `INSERT INTO estimate_requests (customer_name, phone, email, year, make, model, engine, vin, mileage, vehicle_type, concern)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
       [b.customerName.trim(), b.phone.trim(), (b.email || '').trim(), String(b.year).trim(), b.make.trim(), b.model.trim(), b.engine || '', b.vin || '', b.mileage || '', b.vehicleType || 'Automotive', b.concern.trim()]
     );
     res.status(201).json({ ok: true, id: result.rows[0].id });
@@ -205,11 +205,11 @@ app.patch('/api/requests/:id', requireOwner, async (req, res) => {
   if (status && !allowed.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
   try {
     const result = await pool.query(
-      \`UPDATE estimate_requests SET
+      `UPDATE estimate_requests SET
         status = COALESCE($2,status),
         estimate = COALESCE($3::jsonb,estimate),
         owner_notes = COALESCE($4,owner_notes)
-       WHERE id = $1 RETURNING *\`,
+       WHERE id = $1 RETURNING *`,
       [id, status || null, estimate ? JSON.stringify(estimate) : null, ownerNotes === undefined ? null : String(ownerNotes)]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'Request not found.' });
@@ -249,9 +249,9 @@ app.post('/estimate-response/:token', async (req, res) => {
   const hash = crypto.createHash('sha256').update(String(req.params.token || '')).digest('hex');
   try {
     const result = await pool.query(
-      \`UPDATE estimate_requests SET customer_decision=$2, customer_decision_at=NOW()
+      `UPDATE estimate_requests SET customer_decision=$2, customer_decision_at=NOW()
        WHERE customer_response_token_hash=$1 AND customer_response_expires_at>NOW() AND customer_decision IS NULL
-       RETURNING id,customer_name,email,estimate\`,
+       RETURNING id,customer_name,email,estimate`,
       [hash, decision]
     );
     if (!result.rowCount) return res.status(404).send('This link has expired or a response was already recorded.');
@@ -270,5 +270,5 @@ app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 initDb().then(() => {
-  app.listen(port, '0.0.0.0', () => console.log(\`Daddy Earl's Estimating listening on \${port}\`));
+  app.listen(port, '0.0.0.0', () => console.log(`Daddy Earl's Estimating listening on ${port}`));
 }).catch(err => { console.error('Database initialization failed:', err); process.exit(1); });
