@@ -2,7 +2,7 @@ const express = require('express');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const { Pool } = require('pg');
-const { ConfidentialClientApplication } = require('@azure/msal-node');
+const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
 const crypto = require('crypto');
 const path = require('path');
@@ -68,60 +68,29 @@ function requireOwner(req, res, next) {
 }
 
 
-const EMAIL_SCOPES = ['User.Read', 'Mail.Send', 'offline_access'];
-const EMAIL_REDIRECT_URI = () => process.env.MICROSOFT_REDIRECT_URI || baseUrl() + '/auth/microsoft/callback';
-function encryptionKey() {
-  const raw = process.env.EMAIL_TOKEN_ENCRYPTION_KEY || '';
-  const key = /^[a-f0-9]{64}$/i.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
-  if (key.length !== 32) throw new Error('EMAIL_TOKEN_ENCRYPTION_KEY must be a 32-byte key encoded as 64 hex characters or base64.');
-  return key;
+function smtpConfigured() {
+  return !!(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
-function encryptCache(value) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-  return [iv.toString('base64'), cipher.getAuthTag().toString('base64'), encrypted.toString('base64')].join('.');
-}
-function decryptCache(value) {
-  const [iv, tag, data] = String(value).split('.');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(iv, 'base64'));
-  decipher.setAuthTag(Buffer.from(tag, 'base64'));
-  return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');
-}
-function msalClient() {
-  const missing = ['MICROSOFT_CLIENT_ID','MICROSOFT_CLIENT_SECRET','EMAIL_TOKEN_ENCRYPTION_KEY'].filter(k => !process.env[k]);
-  if (missing.length) throw new Error('Microsoft email setup is incomplete. Configure ' + missing.join(', ') + ' in Render.');
-  return new ConfidentialClientApplication({
-    auth: { clientId: process.env.MICROSOFT_CLIENT_ID, authority: 'https://login.microsoftonline.com/consumers', clientSecret: process.env.MICROSOFT_CLIENT_SECRET },
-    cache: { cachePlugin: {
-      beforeCacheAccess: async context => {
-        const result = await pool.query('SELECT encrypted_cache FROM microsoft_email_tokens WHERE id=1');
-        if (result.rowCount) context.tokenCache.deserialize(decryptCache(result.rows[0].encrypted_cache));
-      },
-      afterCacheAccess: async context => {
-        if (context.cacheHasChanged) {
-          const encrypted = encryptCache(context.tokenCache.serialize());
-          await pool.query('INSERT INTO microsoft_email_tokens(id,encrypted_cache,updated_at) VALUES(1,$1,NOW()) ON CONFLICT(id) DO UPDATE SET encrypted_cache=EXCLUDED.encrypted_cache,updated_at=NOW()', [encrypted]);
-        }
-      }
-    }}
+function smtpTransport() {
+  if (!smtpConfigured()) throw new Error('Email setup is incomplete. Add SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS in Render.');
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT),
+    secure: Number(process.env.SMTP_PORT) === 465,
+    requireTLS: Number(process.env.SMTP_PORT) === 587,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
   });
 }
-async function sendMicrosoftMail({ to, subject, html, text: plainText, attachments }) {
-  const client = msalClient();
-  const accounts = await client.getTokenCache().getAllAccounts();
-  if (!accounts.length) throw new Error('Connect the shop Outlook account in the dashboard before sending estimates.');
-  const token = await client.acquireTokenSilent({ account: accounts[0], scopes: EMAIL_SCOPES });
-  const message = { subject, body: { contentType: html ? 'HTML' : 'Text', content: html || plainText || '' }, toRecipients: [{ emailAddress: { address: to } }] };
-  if (attachments && attachments.length) message.attachments = attachments.map(a => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.filename, contentType: a.contentType, contentBytes: a.content.toString('base64') }));
-  const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
-    method: 'POST', headers: { Authorization: 'Bearer ' + token.accessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, saveToSentItems: true })
+async function sendEmail({ to, subject, html, text: plainText, attachments }) {
+  const transporter = smtpTransport();
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    html,
+    text: plainText,
+    attachments: (attachments || []).map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType }))
   });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error('Outlook could not send the email (' + response.status + '): ' + detail.slice(0, 500));
-  }
 }
 
 function estimatePdf(row, estimate) {
@@ -175,17 +144,17 @@ async function sendEstimate(row) {
   const pdf = await estimatePdf(row, estimate);
   const subject = "Your repair estimate from Daddy Earl's Auto Repair";
   const html = \`<div style="font-family:Arial,sans-serif;color:#202124;max-width:620px;margin:auto;line-height:1.55"><div style="background:#171717;color:#fff;padding:24px"><div style="font-size:21px;font-weight:bold;letter-spacing:1px">DADDY EARL'S AUTO REPAIR</div><div style="color:#e6b84b;margin-top:5px">YOUR REPAIR ESTIMATE</div></div><div style="padding:24px"><p>Hello \${esc(row.customer_name)},</p><p>Thank you for choosing Daddy Earl's Auto Repair. Your estimate is ready. A PDF copy is attached for your records.</p><div style="background:#f4f4f4;padding:16px;border-radius:8px"><strong>Vehicle:</strong> \${esc([row.year,row.make,row.model].filter(Boolean).join(' '))}<br><strong>Service:</strong> \${esc(row.concern)}<br><strong>Estimated total:</strong> <span style="font-size:22px;font-weight:bold">\${money(totals.total)}</span></div>\${estimate.customerMessage ? '<p>' + esc(estimate.customerMessage) + '</p>' : ''}<p>Please review the attached estimate and choose an option below. Your response will be recorded and sent to our team.</p><p style="margin:28px 0"><a href="\${responseUrl}" style="background:#171717;color:#fff;padding:13px 20px;text-decoration:none;border-radius:5px">Review estimate & respond</a></p><p style="font-size:13px;color:#666">This link is valid for 30 days. Selecting approve records your response; our team will confirm scheduling before work begins.</p><p>Thank you,<br>Daddy Earl's Auto Repair</p></div></div>\`;
-  await sendMicrosoftMail({ to: row.email, subject, html, attachments: [{ filename: 'Daddy-Earls-Estimate-' + row.id + '.pdf', content: pdf, contentType: 'application/pdf' }] });
+  await sendEmail({ to: row.email, subject, html, attachments: [{ filename: 'Daddy-Earls-Estimate-' + row.id + '.pdf', content: pdf, contentType: 'application/pdf' }] });
   await pool.query('UPDATE estimate_requests SET estimate_email_sent_at=NOW(), estimate_email_error=NULL, status=CASE WHEN status=\'Approved\' THEN \'Sent\' ELSE status END WHERE id=$1', [row.id]);
-  const notifyTo = process.env.OWNER_NOTIFICATION_EMAIL;
+  const notifyTo = process.env.OWNER_NOTIFICATION_EMAIL || process.env.SMTP_USER;
   if (notifyTo) {
-    await sendMicrosoftMail({ to: notifyTo, subject: 'Estimate emailed to ' + row.customer_name + ' (#' + row.id + ')', text: 'Estimate #' + row.id + ' was emailed to ' + row.customer_name + ' (' + row.email + '). Estimated total: ' + money(totals.total) + '.' }).catch(error => console.error('Owner notification email failed:', error.message));
+    await sendEmail({ to: notifyTo, subject: 'Estimate emailed to ' + row.customer_name + ' (#' + row.id + ')', text: 'Estimate #' + row.id + ' was emailed to ' + row.customer_name + ' (' + row.email + '). Estimated total: ' + money(totals.total) + '.' }).catch(error => console.error('Owner notification email failed:', error.message));
   }
   return { sent: true, alreadySent: false };
 }
 
 app.get('/api/health', async (req, res) => {
-  try { await pool.query('SELECT 1'); res.json({ ok: true, database: 'connected', emailConfigured: !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.EMAIL_TOKEN_ENCRYPTION_KEY) }); }
+  try { await pool.query('SELECT 1'); res.json({ ok: true, database: 'connected', emailConfigured: smtpConfigured() }); }
   catch (e) { res.status(503).json({ ok: false, database: 'unavailable' }); }
 });
 
@@ -202,29 +171,8 @@ app.post('/api/login', (req, res) => {
 });
 
 app.post('/api/logout', requireOwner, (req, res) => req.session.destroy(() => res.json({ ok: true })));
-app.get('/api/email/status', requireOwner, async (req, res) => {
-  try {
-    const result = await pool.query('SELECT updated_at FROM microsoft_email_tokens WHERE id=1');
-    res.json({ connected: !!result.rowCount, updatedAt: result.rowCount ? result.rows[0].updated_at : null });
-  } catch (e) { res.status(500).json({ error: 'Could not check Outlook connection.' }); }
-});
-app.get('/api/email/connect', requireOwner, async (req, res) => {
-  try {
-    const state = crypto.randomBytes(24).toString('hex');
-    req.session.microsoftOAuthState = state;
-    const url = await msalClient().getAuthCodeUrl({ scopes: EMAIL_SCOPES, redirectUri: EMAIL_REDIRECT_URI(), state, prompt: 'select_account' });
-    res.redirect(url);
-  } catch (e) { res.status(500).send(esc(e.message)); }
-});
-app.get('/auth/microsoft/callback', async (req, res) => {
-  try {
-    if (!req.session || !req.session.owner) return res.status(401).send('Please sign in to the owner dashboard and try connecting Outlook again.');
-    if (!req.query.code || !req.query.state || req.query.state !== req.session.microsoftOAuthState) return res.status(400).send('Outlook sign-in could not be verified. Please try again.');
-    delete req.session.microsoftOAuthState;
-    await msalClient().acquireTokenByCode({ code: String(req.query.code), scopes: EMAIL_SCOPES, redirectUri: EMAIL_REDIRECT_URI() });
-    res.redirect('/dashboard?outlook=connected');
-  } catch (e) { console.error('Microsoft OAuth callback failed:', e); res.status(500).send('Could not connect Outlook. Return to the dashboard and try again.');
-  }
+app.get('/api/email/status', requireOwner, (req, res) => {
+  res.json({ connected: smtpConfigured(), provider: 'Porkbun SMTP', from: process.env.EMAIL_FROM || process.env.SMTP_USER || null });
 });
 app.get('/api/me', (req, res) => res.json({ signedIn: !!(req.session && req.session.owner) }));
 
@@ -310,7 +258,7 @@ app.post('/estimate-response/:token', async (req, res) => {
     const r = result.rows[0];
     if (process.env.OWNER_NOTIFICATION_EMAIL) {
       try {
-        await sendMicrosoftMail({ to: process.env.OWNER_NOTIFICATION_EMAIL, subject: 'Customer ' + decision.toLowerCase() + ' estimate #' + r.id, text: r.customer_name + ' (' + (r.email || 'no email') + ') has ' + decision.toLowerCase() + ' estimate #' + r.id + '.' });
+        await sendEmail({ to: process.env.OWNER_NOTIFICATION_EMAIL, subject: 'Customer ' + decision.toLowerCase() + ' estimate #' + r.id, text: r.customer_name + ' (' + (r.email || 'no email') + ') has ' + decision.toLowerCase() + ' estimate #' + r.id + '.' });
       } catch (e) { console.error('Customer response notification failed:', e.message); }
     }
     res.send('<!doctype html><html><body style="font-family:Arial;padding:40px;max-width:620px;margin:auto"><h1>Thank you</h1><p>Your response has been recorded: <strong>' + esc(decision) + '</strong>.</p><p>Daddy Earl\'s Auto Repair has been notified and will follow up with you.</p></body></html>');
