@@ -123,7 +123,7 @@ async function sendEstimate(row) {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   await pool.query(
-    'UPDATE estimate_requests SET customer_response_token_hash=$2, customer_response_expires_at=NOW()+INTERVAL \\'30 days\\', estimate_email_error=NULL WHERE id=$1',
+    'UPDATE estimate_requests SET customer_response_token_hash=$2, customer_response_expires_at=NOW()+INTERVAL \'30 days\', estimate_email_error=NULL WHERE id=$1',
     [row.id, tokenHash]
   );
   const responseUrl = baseUrl() + '/estimate-response/' + token;
@@ -137,7 +137,7 @@ async function sendEstimate(row) {
     html,
     attachments: [{ filename: 'Daddy-Earls-Estimate-' + row.id + '.pdf', content: pdf, contentType: 'application/pdf' }]
   });
-  await pool.query('UPDATE estimate_requests SET estimate_email_sent_at=NOW(), estimate_email_error=NULL, status=CASE WHEN status=\\'Approved\\' THEN \\'Sent\\' ELSE status END WHERE id=$1', [row.id]);
+  await pool.query('UPDATE estimate_requests SET estimate_email_sent_at=NOW(), estimate_email_error=NULL, status=CASE WHEN status=\'Approved\' THEN \'Sent\' ELSE status END WHERE id=$1', [row.id]);
   const notifyTo = process.env.OWNER_NOTIFICATION_EMAIL;
   if (notifyTo) {
     await transport.sendMail({
@@ -227,12 +227,12 @@ app.get('/estimate-response/:token', async (req, res) => {
   try {
     const result = await pool.query('SELECT id,customer_name,year,make,model,estimate,customer_decision,customer_response_expires_at FROM estimate_requests WHERE customer_response_token_hash=$1', [hash]);
     if (!result.rowCount || !result.rows[0].customer_response_expires_at || new Date(result.rows[0].customer_response_expires_at) < new Date()) {
-      return res.status(404).send('<!doctype html><html><body style="font-family:Arial;padding:40px"><h1>Link unavailable</h1><p>This estimate response link is invalid or has expired. Please contact Daddy Earl\\'s Auto Repair.</p></body></html>');
+      return res.status(404).send('<!doctype html><html><body style="font-family:Arial;padding:40px"><h1>Link unavailable</h1><p>This estimate response link is invalid or has expired. Please contact Daddy Earl\'s Auto Repair.</p></body></html>');
     }
     const r = result.rows[0];
     if (r.customer_decision) return res.send('<!doctype html><html><body style="font-family:Arial;padding:40px"><h1>Response already received</h1><p>We have recorded your response: ' + esc(r.customer_decision) + '. Thank you.</p></body></html>');
     const total = r.estimate && r.estimate.totals ? money(r.estimate.totals.total) : 'To be confirmed';
-    res.send('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Review estimate</title></head><body style="font-family:Arial,sans-serif;max-width:620px;margin:40px auto;padding:20px;color:#222"><h1 style="background:#171717;color:white;padding:22px">Daddy Earl\\'s Auto Repair</h1><h2>Review your estimate</h2><p>Hello ' + esc(r.customer_name) + ',</p><p>Vehicle: ' + esc([r.year,r.make,r.model].filter(Boolean).join(' ')) + '</p><h2>Estimated total: ' + total + '</h2><p>Choose whether you would like us to proceed. Our team will contact you to confirm scheduling. Your selection records your response but does not by itself authorize additional work beyond this estimate.</p><form method="POST" action="/estimate-response/' + encodeURIComponent(req.params.token) + '"><button name="decision" value="Approved" style="padding:14px 20px;background:#176b3a;color:white;border:0;border-radius:5px;margin-right:8px">Approve estimate</button><button name="decision" value="Declined" style="padding:14px 20px;background:#555;color:white;border:0;border-radius:5px">Decline</button></form></body></html>');
+    res.send('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Review estimate</title></head><body style="font-family:Arial,sans-serif;max-width:620px;margin:40px auto;padding:20px;color:#222"><h1 style="background:#171717;color:white;padding:22px">Daddy Earl\'s Auto Repair</h1><h2>Review your estimate</h2><p>Hello ' + esc(r.customer_name) + ',</p><p>Vehicle: ' + esc([r.year,r.make,r.model].filter(Boolean).join(' ')) + '</p><h2>Estimated total: ' + total + '</h2><p>Choose whether you would like us to proceed. Our team will contact you to confirm scheduling. Your selection records your response but does not by itself authorize additional work beyond this estimate.</p><form method="POST" action="/estimate-response/' + encodeURIComponent(req.params.token) + '"><button name="decision" value="Approved" style="padding:14px 20px;background:#176b3a;color:white;border:0;border-radius:5px;margin-right:8px">Approve estimate</button><button name="decision" value="Declined" style="padding:14px 20px;background:#555;color:white;border:0;border-radius:5px">Decline</button></form></body></html>');
   } catch (e) { console.error(e); res.status(500).send('Unable to load estimate response.'); }
 });
 
@@ -258,7 +258,7 @@ app.post('/estimate-response/:token', async (req, res) => {
         }));
       } catch (e) { console.error('Customer response notification failed:', e.message); }
     }
-    res.send('<!doctype html><html><body style="font-family:Arial;padding:40px;max-width:620px;margin:auto"><h1>Thank you</h1><p>Your response has been recorded: <strong>' + esc(decision) + '</strong>.</p><p>Daddy Earl\\'s Auto Repair has been notified and will follow up with you.</p></body></html>');
+    res.send('<!doctype html><html><body style="font-family:Arial;padding:40px;max-width:620px;margin:auto"><h1>Thank you</h1><p>Your response has been recorded: <strong>' + esc(decision) + '</strong>.</p><p>Daddy Earl\'s Auto Repair has been notified and will follow up with you.</p></body></html>');
   } catch (e) { console.error(e); res.status(500).send('We could not record your response. Please call the shop.'); }
 });
 
