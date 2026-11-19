@@ -2,7 +2,7 @@ const express = require('express');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
 const { Pool } = require('pg');
-const nodemailer = require('nodemailer');
+const { ConfidentialClientApplication } = require('@azure/msal-node');
 const PDFDocument = require('pdfkit');
 const crypto = require('crypto');
 const path = require('path');
@@ -58,7 +58,7 @@ async function initDb() {
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_response_token_hash TEXT;
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_response_expires_at TIMESTAMPTZ;
     ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision TEXT;
-    ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision_at TIMESTAMPTZ;
+    ALTER TABLE estimate_requests ADD COLUMN IF NOT EXISTS customer_decision_at TIMESTAMPTZ;\n    CREATE TABLE IF NOT EXISTS microsoft_email_tokens (id INTEGER PRIMARY KEY CHECK (id=1), encrypted_cache TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
   \`);
 }
 
@@ -67,16 +67,61 @@ function requireOwner(req, res, next) {
   next();
 }
 
-function mailer() {
-  const required = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'];
-  const missing = required.filter(k => !process.env[k]);
-  if (missing.length) throw new Error('Email delivery is not configured. Add the SMTP settings in Render: ' + missing.join(', '));
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+
+const EMAIL_SCOPES = ['User.Read', 'Mail.Send', 'offline_access'];
+const EMAIL_REDIRECT_URI = () => process.env.MICROSOFT_REDIRECT_URI || baseUrl() + '/auth/microsoft/callback';
+function encryptionKey() {
+  const raw = process.env.EMAIL_TOKEN_ENCRYPTION_KEY || '';
+  const key = /^[a-f0-9]{64}$/i.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
+  if (key.length !== 32) throw new Error('EMAIL_TOKEN_ENCRYPTION_KEY must be a 32-byte key encoded as 64 hex characters or base64.');
+  return key;
+}
+function encryptCache(value) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  return [iv.toString('base64'), cipher.getAuthTag().toString('base64'), encrypted.toString('base64')].join('.');
+}
+function decryptCache(value) {
+  const [iv, tag, data] = String(value).split('.');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(tag, 'base64'));
+  return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');
+}
+function msalClient() {
+  const missing = ['MICROSOFT_CLIENT_ID','MICROSOFT_CLIENT_SECRET','EMAIL_TOKEN_ENCRYPTION_KEY'].filter(k => !process.env[k]);
+  if (missing.length) throw new Error('Microsoft email setup is incomplete. Configure ' + missing.join(', ') + ' in Render.');
+  return new ConfidentialClientApplication({
+    auth: { clientId: process.env.MICROSOFT_CLIENT_ID, authority: 'https://login.microsoftonline.com/consumers', clientSecret: process.env.MICROSOFT_CLIENT_SECRET },
+    cache: { cachePlugin: {
+      beforeCacheAccess: async context => {
+        const result = await pool.query('SELECT encrypted_cache FROM microsoft_email_tokens WHERE id=1');
+        if (result.rowCount) context.tokenCache.deserialize(decryptCache(result.rows[0].encrypted_cache));
+      },
+      afterCacheAccess: async context => {
+        if (context.cacheHasChanged) {
+          const encrypted = encryptCache(context.tokenCache.serialize());
+          await pool.query('INSERT INTO microsoft_email_tokens(id,encrypted_cache,updated_at) VALUES(1,$1,NOW()) ON CONFLICT(id) DO UPDATE SET encrypted_cache=EXCLUDED.encrypted_cache,updated_at=NOW()', [encrypted]);
+        }
+      }
+    }}
   });
+}
+async function sendMicrosoftMail({ to, subject, html, text: plainText, attachments }) {
+  const client = msalClient();
+  const accounts = await client.getTokenCache().then(cache => cache.getAllAccounts());
+  if (!accounts.length) throw new Error('Connect the shop Outlook account in the dashboard before sending estimates.');
+  const token = await client.acquireTokenSilent({ account: accounts[0], scopes: EMAIL_SCOPES });
+  const message = { subject, body: { contentType: html ? 'HTML' : 'Text', content: html || plainText || '' }, toRecipients: [{ emailAddress: { address: to } }] };
+  if (attachments && attachments.length) message.attachments = attachments.map(a => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.filename, contentType: a.contentType, contentBytes: a.content.toString('base64') }));
+  const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token.accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, saveToSentItems: true })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error('Outlook could not send the email (' + response.status + '): ' + detail.slice(0, 500));
+  }
 }
 
 function estimatePdf(row, estimate) {
@@ -117,7 +162,7 @@ function estimatePdf(row, estimate) {
 async function sendEstimate(row) {
   if (!row.email || !String(row.email).trim()) throw new Error('This customer does not have an email address on file.');
   if (row.estimate_email_sent_at) return { sent: true, alreadySent: true };
-  const transport = mailer();
+
   const estimate = row.estimate || {};
   const totals = estimate.totals || {};
   const token = crypto.randomBytes(32).toString('hex');
@@ -150,7 +195,7 @@ async function sendEstimate(row) {
 }
 
 app.get('/api/health', async (req, res) => {
-  try { await pool.query('SELECT 1'); res.json({ ok: true, database: 'connected', emailConfigured: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_FROM) }); }
+  try { await pool.query('SELECT 1'); res.json({ ok: true, database: 'connected', emailConfigured: !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.EMAIL_TOKEN_ENCRYPTION_KEY) }); }
   catch (e) { res.status(503).json({ ok: false, database: 'unavailable' }); }
 });
 
@@ -167,6 +212,30 @@ app.post('/api/login', (req, res) => {
 });
 
 app.post('/api/logout', requireOwner, (req, res) => req.session.destroy(() => res.json({ ok: true })));
+app.get('/api/email/status', requireOwner, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT updated_at FROM microsoft_email_tokens WHERE id=1');
+    res.json({ connected: !!result.rowCount, updatedAt: result.rowCount ? result.rows[0].updated_at : null });
+  } catch (e) { res.status(500).json({ error: 'Could not check Outlook connection.' }); }
+});
+app.get('/api/email/connect', requireOwner, async (req, res) => {
+  try {
+    const state = crypto.randomBytes(24).toString('hex');
+    req.session.microsoftOAuthState = state;
+    const url = await msalClient().getAuthCodeUrl({ scopes: EMAIL_SCOPES, redirectUri: EMAIL_REDIRECT_URI(), state, prompt: 'select_account' });
+    res.redirect(url);
+  } catch (e) { res.status(500).send(esc(e.message)); }
+});
+app.get('/auth/microsoft/callback', async (req, res) => {
+  try {
+    if (!req.session || !req.session.owner) return res.status(401).send('Please sign in to the owner dashboard and try connecting Outlook again.');
+    if (!req.query.code || !req.query.state || req.query.state !== req.session.microsoftOAuthState) return res.status(400).send('Outlook sign-in could not be verified. Please try again.');
+    delete req.session.microsoftOAuthState;
+    await msalClient().acquireTokenByCode({ code: String(req.query.code), scopes: EMAIL_SCOPES, redirectUri: EMAIL_REDIRECT_URI() });
+    res.redirect('/dashboard?outlook=connected');
+  } catch (e) { console.error('Microsoft OAuth callback failed:', e); res.status(500).send('Could not connect Outlook. Return to the dashboard and try again.');
+  }
+});
 app.get('/api/me', (req, res) => res.json({ signedIn: !!(req.session && req.session.owner) }));
 
 app.post('/api/requests', async (req, res) => {
